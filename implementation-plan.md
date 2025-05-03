@@ -15,7 +15,7 @@
   ├── images/             # Visualization output images
   ├── models/             # Model definitions (CNN, BiLSTM, etc.)
   ├── utils/              # Helper functions (preprocessing, metrics)
-  ├── saved_models/       # Trained models (CNN, BiLSTM, etc.)
+  ├── trained_models/     # Trained models (CNN, BiLSTM, etc.)
   ├── configs.py          # Hyperparameters
   ├── train.py            # Training script
   └── requirements.txt    # Dependencies

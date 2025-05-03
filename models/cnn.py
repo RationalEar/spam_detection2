@@ -28,8 +28,8 @@ class SpamCNN(nn.Module):
         x = self.global_max_pool(x).squeeze(-1)  # (batch_size, 32)
         x = self.dropout(F.relu(self.fc1(x)))
         x = self.fc2(x)
-        x = torch.sigmoid(x).squeeze(-1)
-        return x
+        x = torch.sigmoid(x)
+        return x  # shape: (batch_size, 1)
 
 
     def grad_cam(self, x):

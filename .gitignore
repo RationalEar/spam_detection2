@@ -3,5 +3,6 @@
 __pycache__
 /data
 /images/
-/saved_models/
 /.env
+/saved_models/
+/trained_models/
