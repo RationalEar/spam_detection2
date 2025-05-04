@@ -148,9 +148,17 @@ def evaluate_model(model, model_type, X_test=None, y_test=None, test_loader=None
             with torch.no_grad():
                 inputs = {'input_ids': batch[0], 'attention_mask': batch[1]}
                 outputs = model(**inputs)
-            logits = outputs.logits
-            y_pred.extend(torch.argmax(logits, dim=1).cpu().numpy())
+                
+            # Fix: Handle tuple output from SpamBERT model
+            if isinstance(outputs, tuple):
+                probs = outputs[0]  # First element contains the probabilities
+            else:
+                probs = outputs
+                
+            predictions = (probs > 0.5).long().cpu().numpy()
+            y_pred.extend(predictions)
             y_true.extend(batch[2].cpu().numpy())
+            
         print(classification_report(y_true, y_pred))
         print("Confusion Matrix:\n", confusion_matrix(y_true, y_pred))
         
@@ -167,4 +175,3 @@ def evaluate_model(model, model_type, X_test=None, y_test=None, test_loader=None
         
         print(classification_report(y_test.numpy(), predictions))
         print("Confusion Matrix:\n", confusion_matrix(y_test.numpy(), predictions))
-
