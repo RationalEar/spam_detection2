@@ -6,6 +6,7 @@ from transformers import BertModel
 class SpamBERT(nn.Module):
     def __init__(self, bert_model_name='bert-base-uncased', num_classes=1, dropout=0.1):
         super(SpamBERT, self).__init__()
+        # Load pre-trained BERT
         self.bert = BertModel.from_pretrained(bert_model_name)
         self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(self.bert.config.hidden_size, num_classes)

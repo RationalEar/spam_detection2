@@ -15,11 +15,4 @@ def build_vocab(texts, min_freq=2):
     word2idx['<UNK>'] = 1
     return word2idx
 
-def set_seed(seed=42):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
     

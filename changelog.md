@@ -7,3 +7,5 @@
 
 - Added utils/explainability.py with SHAP and LIME helper functions for the CNN model, following coding guidelines.
 - Added example code cells to local.ipynb to demonstrate SHAP and LIME explainability for the CNN model, including visualization.
+
+- Implemented Grad-CAM in SpamCNN (models/cnn.py): grad_cam method now computes class activation maps for a batch input, using hooks to capture activations and gradients from the last conv layer, and returns a normalized CAM for each input sequence.
