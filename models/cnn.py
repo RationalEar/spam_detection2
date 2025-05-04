@@ -90,6 +90,20 @@ class SpamCNN(nn.Module):
         return cam
 
 
+    def predict(self, x):
+        """
+        Make predictions on input data
+        Args:
+            x: input tensor (batch_size, seq_len)
+        Returns:
+            predictions: tensor of predictions (batch_size,)
+        """
+        self.eval()
+        with torch.no_grad():
+            outputs = self.forward(x)
+            return outputs.squeeze(1)
+
+
     def save(self, path):
         torch.save(self.state_dict(), path)
 
@@ -97,3 +111,4 @@ class SpamCNN(nn.Module):
     def load(self, path):
         self.load_state_dict(torch.load(path))
         self.eval()
+

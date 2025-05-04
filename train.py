@@ -112,7 +112,8 @@ def train_model(model_type, train_df, test_df, embedding_dim=300, pretrained_emb
                 outputs = model(inputs)
                 if isinstance(outputs, tuple):
                     outputs = outputs[0]
-            loss = criterion(outputs, labels)
+            # Fix: squeeze the output to match label dimensions
+            loss = criterion(outputs.squeeze(1), labels)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -150,6 +151,11 @@ def evaluate_model(model, model_type, X_test=None, y_test=None, test_loader=None
         print("Confusion Matrix:\n", confusion_matrix(y_true, y_pred))
         
     elif model_type in ['cnn', 'bilstm']:
-        y_pred = (model.predict(X_test) > 0.5).astype(int)
-        print(classification_report(y_test, y_pred))
-        print("Confusion Matrix:\n", confusion_matrix(y_test, y_pred))
+        # Add predict method call for CNN model
+        X_test = X_test.to(device)
+        with torch.no_grad():
+            outputs = model(X_test)
+            predictions = (outputs.squeeze(1) > 0.5).cpu().numpy()
+        
+        print(classification_report(y_test.numpy(), predictions))
+        print("Confusion Matrix:\n", confusion_matrix(y_test.numpy(), predictions))
