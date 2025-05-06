@@ -49,19 +49,29 @@ def explain_cnn_with_shap(model, tokenizer, texts, device, max_len=128, num_samp
         shap_values, input_ids
     """
     model.eval()
-    background_texts = texts[:num_samples]
+    # Use more background samples for better results
+    background_size = min(num_samples, len(texts))
+    background_texts = texts[:background_size]
     background_inputs = np.array([tokenizer(t, max_len) for t in background_texts])
     
     def predict_fn(x):
         x = torch.tensor(x, dtype=torch.long).to(device)
         with torch.no_grad():
             out = model(x)
+            # For binary classification, return as a single column
             return out.cpu().numpy()
     
+    # Create the explainer with the masker
     explainer = shap.KernelExplainer(predict_fn, background_inputs, random_state=rng)
+    
+    # Get test inputs
     test_inputs = np.array([tokenizer(t, max_len) for t in texts])
+    test_tensor = torch.tensor(test_inputs, dtype=torch.long).to(device)
+    
+    # Generate SHAP values with more samples for stability
     shap_values = explainer.shap_values(test_inputs, nsamples=100)
-    return shap_values, torch.tensor(test_inputs, dtype=torch.long).to(device)
+    
+    return shap_values, test_tensor
 
 
 # LIME explainability for CNN model
@@ -94,6 +104,3 @@ def explain_cnn_with_lime(model, tokenizer, class_names, device, max_len=128):
         return explainer.explain_instance(text, predict_proba, num_features=10)
     
     return explain_fn
-
-
-
