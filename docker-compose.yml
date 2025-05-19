@@ -1,0 +1,6 @@
+version: '3.3'
+services:
+  python:
+    image: 'python:3.10'
+    volumes:
+      - './:/app'
