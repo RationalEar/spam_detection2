@@ -17,6 +17,16 @@ def build_vocab(texts, min_freq=2):
     return word2idx, idx2word
 
 
+def encode(text, word2idx, max_len=200):
+    tokens = text.split()
+    idxs = [word2idx.get(token, word2idx['<UNK>']) for token in tokens]
+    if len(idxs) < max_len:
+        idxs += [word2idx['<PAD>']] * (max_len - len(idxs))
+    else:
+        idxs = idxs[:max_len]
+    return idxs
+
+
 def cnn_tokenizer(text, word2idx, max_len, idx2word=None):
     idxs = [word2idx.get(token, word2idx['<UNK>']) for token in text.split()]
     if len(idxs) < max_len:
