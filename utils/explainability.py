@@ -5,8 +5,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from lime.lime_text import LimeTextExplainer
 
-from util import cnn_tokenizer
-
 
 def explain_spam_cnn(model, tokenizer, texts, word2idx, max_len, device, num_samples=100, rng=None):
     """
@@ -356,7 +354,7 @@ def visualize_shap_for_sample(shap_values, original_text, class_names=['ham', 's
 
     ax.set_yticks([])  # Remove default y-axis ticks
     ax.set_xlabel("SHAP Value (Influence on 'spam' prediction)")
-    ax.set_ylabel("Words") # Add a y-axis label
+    ax.set_ylabel("Words")  # Add a y-axis label
     title = original_text[:40] + '...' if len(original_text) > 40 else original_text
     ax.set_title(f"SHAP Explanation for: '{title}'")
     ax.invert_yaxis()  # To display the first word at the top
@@ -377,4 +375,3 @@ def visualize_lime_explanation(lime_exp, original_text, class_names=['ham', 'spa
     pred_class = np.argmax(lime_exp.predict_proba)
     print(f"Predicted Class: {class_names[pred_class]}")
     lime_exp.show_in_notebook(text=original_text)
-

@@ -31,10 +31,118 @@ def encode(text, word2idx, max_len=200):
     return idxs
 
 
+def train_bilstm(model, train_loader, val_loader, criterion, optimizer, num_epochs, device, max_norm=1.0, 
+             adversarial_training=True, epsilon=0.1, model_save_path=''):
+    """
+    Training loop for BiLSTM model with gradient clipping and adversarial training
+    Args:
+        model: BiLSTM model instance
+        train_loader: DataLoader for training data
+        val_loader: DataLoader for validation data
+        criterion: Loss function
+        optimizer: Optimizer instance
+        num_epochs: Number of training epochs
+        device: Device to train on
+        max_norm: Maximum gradient norm for clipping
+        adversarial_training: Whether to use adversarial training
+        epsilon: Epsilon for adversarial example generation
+        model_save_path: Directory to save model checkpoints
+    """
+    best_val_loss = float('inf')
+    
+    # Create save directory if it doesn't exist
+    if model_save_path:
+        os.makedirs(model_save_path, exist_ok=True)
+    
+    for epoch in range(num_epochs):
+        # Training phase
+        model.train()
+        total_train_loss = 0
+        correct_train = 0
+        total_train = 0
+        
+        for batch in train_loader:
+            inputs, labels = [b.to(device) for b in batch]
+            batch_size = inputs.size(0)
+            
+            # Regular forward pass
+            optimizer.zero_grad()
+            outputs, _ = model(inputs)
+            loss = criterion(outputs, labels)
+            
+            # Adversarial training
+            if adversarial_training:
+                # Generate adversarial examples
+                with torch.set_grad_enabled(True):
+                    adv_embeddings = model.generate_adversarial_example(inputs, labels, epsilon=epsilon)
+                    # Forward pass with adversarial examples
+                    adv_outputs, _ = model(adv_embeddings)
+                    adv_loss = criterion(adv_outputs, labels)
+                    # Combine losses
+                    loss = 0.5 * (loss + adv_loss)
+            
+            loss.backward()
+            # Clip gradients
+            model.clip_gradients(max_norm)
+            optimizer.step()
+            
+            total_train_loss += loss.item() * batch_size
+            predicted = (outputs > 0.5).float()
+            correct_train += (predicted == labels).sum().item()
+            total_train += batch_size
+        
+        avg_train_loss = total_train_loss / total_train
+        train_acc = correct_train / total_train
+        
+        # Validation phase
+        model.eval()
+        total_val_loss = 0
+        correct_val = 0
+        total_val = 0
+        
+        with torch.no_grad():
+            for batch in val_loader:
+                inputs, labels = [b.to(device) for b in batch]
+                batch_size = inputs.size(0)
+                
+                outputs, _ = model(inputs)
+                loss = criterion(outputs, labels)
+                
+                total_val_loss += loss.item() * batch_size
+                predicted = (outputs > 0.5).float()
+                correct_val += (predicted == labels).sum().item()
+                total_val += batch_size
+        
+        avg_val_loss = total_val_loss / total_val
+        val_acc = correct_val / total_val
+        
+        # Update training history
+        model.update_training_history(
+            train_loss=avg_train_loss,
+            val_loss=avg_val_loss,
+            train_acc=train_acc,
+            val_acc=val_acc
+        )
+        
+        print(f'Epoch {epoch+1}/{num_epochs}:')
+        print(f'Train Loss: {avg_train_loss:.4f}, Train Acc: {train_acc:.4f}')
+        print(f'Val Loss: {avg_val_loss:.4f}, Val Acc: {val_acc:.4f}')
+        
+        # Save best model
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            if model_save_path:
+                best_model_path = os.path.join(model_save_path, 'best_bilstm_model.pt')
+                model.save(best_model_path)
+                print(f"Saved best model to {best_model_path}")
+    
+    return model
+
+
 def train_model(model_type, train_df, test_df, embedding_dim=300, pretrained_embeddings=None,
                 model_save_path='', max_len=200, evaluate=False):
     
-    word2idx = build_vocab(train_df['text'])
+    word2idx, idx2word = build_vocab(train_df['text'])
     
     X_train = torch.tensor([encode(t, word2idx, max_len) for t in train_df['text']])
     y_train = torch.tensor(train_df['label'].values, dtype=torch.float32)
@@ -82,48 +190,71 @@ def train_model(model_type, train_df, test_df, embedding_dim=300, pretrained_emb
         raise ValueError('Invalid model_type')
     
     # Move model to GPU if available
-    model = model.cuda() if torch.cuda.is_available() else model
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = model.to(device)
     
     batch_size = 32
     criterion = nn.BCELoss()
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
     
-    if model_type in ['cnn', 'bilstm']:
+    if model_type == 'bilstm':
+        # Create data loaders for BiLSTM
         train_dataset = TensorDataset(train_inputs, train_labels)
-        test_dataset = TensorDataset(test_inputs, test_labels)
+        val_dataset = TensorDataset(test_inputs, test_labels)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size)
+        
+        # Train BiLSTM with specialized training loop
+        model = train_bilstm(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            criterion=criterion,
+            optimizer=optimizer,
+            num_epochs=epochs,
+            device=device,
+            max_norm=1.0,
+            adversarial_training=True,
+            epsilon=0.1,
+            model_save_path=model_save_path
+        )
+    else:  # CNN or BERT
+        if model_type == 'bert':
+            train_dataset = TensorDataset(train_inputs['input_ids'], train_inputs['attention_mask'], train_labels)
+            test_dataset = TensorDataset(test_inputs['input_ids'], test_inputs['attention_mask'], test_labels)
+        else:  # CNN
+            train_dataset = TensorDataset(train_inputs, train_labels)
+            test_dataset = TensorDataset(test_inputs, test_labels)
+        
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         test_loader = DataLoader(test_dataset, batch_size=batch_size)
-    else:  # BERT
-        train_dataset = TensorDataset(train_inputs['input_ids'], train_inputs['attention_mask'], train_labels)
-        test_dataset = TensorDataset(test_inputs['input_ids'], test_inputs['attention_mask'], test_labels)
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size)
+        
+        # Standard training loop for CNN and BERT
+        for epoch in range(epochs):
+            model.train()
+            total_loss = 0
+            for batch in train_loader:
+                optimizer.zero_grad()
+                if model_type == 'bert':
+                    input_ids, attention_mask, labels = [b.to(device) for b in batch]
+                    outputs, _ = model(input_ids=input_ids, attention_mask=attention_mask)
+                else:  # CNN
+                    inputs, labels = [b.to(device) for b in batch]
+                    outputs = model(inputs)
+                    if isinstance(outputs, tuple):
+                        outputs = outputs[0]
+                
+                # Check tensor dimensions before squeezing
+                if outputs.dim() > 1 and outputs.shape[1] == 1:
+                    outputs = outputs.squeeze(1)
+                
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item()
+            print(f"Epoch {epoch + 1}/{epochs} - Loss: {total_loss / len(train_loader):.4f}")
     
-    for epoch in range(epochs):
-        model.train()
-        total_loss = 0
-        for batch in train_loader:
-            optimizer.zero_grad()
-            if model_type == 'bert':
-                input_ids, attention_mask, labels = [b.cuda() if torch.cuda.is_available() else b for b in batch]
-                outputs, _ = model(input_ids=input_ids, attention_mask=attention_mask)
-            else:
-                inputs, labels = [b.cuda() if torch.cuda.is_available() else b for b in batch]
-                outputs = model(inputs)
-                if isinstance(outputs, tuple):
-                    outputs = outputs[0]
-            
-            # Check tensor dimensions before squeezing
-            if outputs.dim() > 1 and outputs.shape[1] == 1:
-                outputs = outputs.squeeze(1)
-            
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
-        print(f"Epoch {epoch + 1}/{epochs} - Loss: {total_loss / len(train_loader):.4f}")
-    
-    # Save model to Google Drive
+    # Save model to specified path
     model_save_file = os.path.join(model_save_path, f'spam_{model_type}.pt')
     model.save(model_save_file)
     print(f"Model saved to {model_save_file}")
