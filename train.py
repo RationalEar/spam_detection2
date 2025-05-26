@@ -32,11 +32,27 @@ def encode(text, word2idx, max_len=200):
 
 
 def train_bilstm(model, train_loader, val_loader, criterion, optimizer, num_epochs, device, max_norm=1.0, 
-             adversarial_training=True, epsilon=0.1):
+             adversarial_training=True, epsilon=0.1, model_save_path=''):
     """
     Training loop for BiLSTM model with gradient clipping and adversarial training
+    Args:
+        model: BiLSTM model instance
+        train_loader: DataLoader for training data
+        val_loader: DataLoader for validation data
+        criterion: Loss function
+        optimizer: Optimizer instance
+        num_epochs: Number of training epochs
+        device: Device to train on
+        max_norm: Maximum gradient norm for clipping
+        adversarial_training: Whether to use adversarial training
+        epsilon: Epsilon for adversarial example generation
+        model_save_path: Directory to save model checkpoints
     """
     best_val_loss = float('inf')
+    
+    # Create save directory if it doesn't exist
+    if model_save_path:
+        os.makedirs(model_save_path, exist_ok=True)
     
     for epoch in range(num_epochs):
         # Training phase
@@ -115,7 +131,10 @@ def train_bilstm(model, train_loader, val_loader, criterion, optimizer, num_epoc
         # Save best model
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            model.save('best_model.pt')
+            if model_save_path:
+                best_model_path = os.path.join(model_save_path, 'best_bilstm_model.pt')
+                model.save(best_model_path)
+                print(f"Saved best model to {best_model_path}")
     
     return model
 
@@ -196,7 +215,8 @@ def train_model(model_type, train_df, test_df, embedding_dim=300, pretrained_emb
             device=device,
             max_norm=1.0,
             adversarial_training=True,
-            epsilon=0.1
+            epsilon=0.1,
+            model_save_path=model_save_path
         )
     else:  # CNN or BERT
         if model_type == 'bert':
