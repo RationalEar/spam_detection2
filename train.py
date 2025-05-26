@@ -57,12 +57,13 @@ def train_bilstm(model, train_loader, val_loader, criterion, optimizer, num_epoc
             # Adversarial training
             if adversarial_training:
                 # Generate adversarial examples
-                adv_embeddings = model.generate_adversarial_example(inputs, labels, epsilon=epsilon)
-                # Forward pass with adversarial examples
-                adv_outputs, _ = model(adv_embeddings)
-                adv_loss = criterion(adv_outputs, labels)
-                # Combine losses
-                loss = 0.5 * (loss + adv_loss)
+                with torch.set_grad_enabled(True):
+                    adv_embeddings = model.generate_adversarial_example(inputs, labels, epsilon=epsilon)
+                    # Forward pass with adversarial examples
+                    adv_outputs, _ = model(adv_embeddings)
+                    adv_loss = criterion(adv_outputs, labels)
+                    # Combine losses
+                    loss = 0.5 * (loss + adv_loss)
             
             loss.backward()
             # Clip gradients

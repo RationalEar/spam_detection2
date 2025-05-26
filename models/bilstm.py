@@ -58,29 +58,21 @@ class BiLSTMSpam(nn.Module):
         x = torch.sigmoid(x).squeeze(-1)
         return x, attn_weights
 
-    def generate_adversarial_example(self, x, y, epsilon=0.1, num_steps=10, clip_min=-1.0, clip_max=1.0):
+    def generate_adversarial_example(self, x, y, epsilon=0.1, num_steps=10):
         """
-        Generate adversarial examples using Projected Gradient Descent (PGD)
+        Generate adversarial examples using the Fast Gradient Sign Method (FGSM)
         Args:
             x: Input tensor (batch_size, seq_len)
             y: Target labels
             epsilon: Maximum perturbation size
             num_steps: Number of optimization steps
-            clip_min: Minimum value for clipping
-            clip_max: Maximum value for clipping
         Returns:
-            Adversarial examples
+            Perturbed embeddings
         """
         self.train()  # Enable gradients
         
-        # Ensure model and tensors are on the same device
-        device = next(self.parameters()).device
-        x = x.to(device).long()
-        y = y.to(device).float()
-        
         # Get initial embeddings
-        with torch.no_grad():
-            embeddings = self.embedding(x)  # (batch_size, seq_len, embedding_dim)
+        embeddings = self.embedding(x)  # (batch_size, seq_len, embedding_dim)
         
         # Create adversarial embeddings starting from original embeddings
         emb_adv = embeddings.clone().detach().requires_grad_(True)
@@ -89,16 +81,16 @@ class BiLSTMSpam(nn.Module):
         # PGD attack
         alpha = epsilon / num_steps  # Step size
         
-        for _ in range(num_steps):
-            # Forward pass
+        for step in range(num_steps):
+            # Forward pass with current adversarial embeddings
             lstm_out, _ = self.lstm(emb_adv)
             context, _ = self.attention(lstm_out)
             x_fc1 = self.dropout(F.relu(self.fc1(context)))
             logits = self.fc2(x_fc1)
-            outputs = torch.sigmoid(logits)
+            outputs = torch.sigmoid(logits).squeeze(-1)
             
             # Compute loss
-            loss = criterion(outputs.squeeze(), y)
+            loss = criterion(outputs, y)
             
             # Compute gradients
             loss.backward()
@@ -115,10 +107,8 @@ class BiLSTMSpam(nn.Module):
                 delta = torch.clamp(delta, -epsilon, epsilon)
                 emb_adv.data = embeddings + delta
                 
-                # Clip values
-                emb_adv.data = torch.clamp(emb_adv.data, clip_min, clip_max)
-                
-                if _ < num_steps - 1:  # Don't need to zero grad on last iteration
+                # Reset gradients for next step
+                if step < num_steps - 1:  # Don't need to zero grad on last iteration
                     emb_adv.grad.zero_()
         
         return emb_adv
