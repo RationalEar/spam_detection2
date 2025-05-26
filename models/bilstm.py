@@ -64,7 +64,7 @@ class BiLSTMSpam(nn.Module):
 
     def generate_adversarial_example(self, x, y, epsilon=0.1, num_steps=10):
         """
-        Generate adversarial examples using the Fast Gradient Sign Method (FGSM)
+        Generate adversarial examples using Projected Gradient Descent (PGD)
         Args:
             x: Input tensor (batch_size, seq_len)
             y: Target labels
@@ -87,6 +87,17 @@ class BiLSTMSpam(nn.Module):
         emb_adv = embeddings.clone().detach().requires_grad_(True)
         criterion = nn.BCELoss()
         
+        # Target is the opposite of the true label
+        target = 1 - y
+        
+        print("\nStarting adversarial example generation:")
+        print("Initial target labels:", target.cpu().numpy())
+        
+        # Get initial predictions
+        with torch.no_grad():
+            initial_outputs, _ = self(x)
+            print("Initial predictions:", initial_outputs.cpu().numpy())
+        
         # PGD attack
         alpha = epsilon / num_steps  # Step size
         
@@ -107,7 +118,7 @@ class BiLSTMSpam(nn.Module):
             # Apply attention
             if hasattr(self, 'attention'):
                 attn_mask = (x != 0).float()  # Create attention mask
-                context, _ = self.attention(lstm_out, attn_mask)
+                context, attn_weights = self.attention(lstm_out, attn_mask)
             else:
                 # If no attention, use last hidden state
                 context = lstm_out[:, -1, :]
@@ -116,28 +127,41 @@ class BiLSTMSpam(nn.Module):
             x_fc1 = self.dropout(F.relu(self.fc1(context)))
             outputs = torch.sigmoid(self.fc2(x_fc1))
             
-            # Compute loss (maximize loss to create adversarial example)
-            loss = -criterion(outputs.squeeze(), y)  # Negative because we want to maximize loss
+            # Print intermediate predictions every few steps
+            if step % 3 == 0:
+                print(f"\nStep {step} predictions:", outputs.detach().cpu().numpy())
+            
+            # Compute loss to maximize probability of target (opposite) class
+            loss = -criterion(outputs.squeeze(), target)  # Negative loss to maximize target class probability
+            
+            # Print loss
+            if step % 3 == 0:
+                print(f"Step {step} loss:", loss.item())
             
             # Compute gradients
             loss.backward()
             
-            # Update adversarial embeddings
+            # Update adversarial embeddings with normalized gradients
             with torch.no_grad():
-                # Get gradient sign
-                grad_sign = emb_adv.grad.sign()
+                # Normalize gradients
+                grad_norm = torch.norm(emb_adv.grad, dim=2, keepdim=True)
+                normalized_grad = emb_adv.grad / (grad_norm + 1e-8)
                 
-                # Update embeddings
-                emb_adv.data = emb_adv.data + alpha * grad_sign
+                # Update embeddings with normalized gradients
+                emb_adv.data = emb_adv.data - alpha * normalized_grad
                 
                 # Project back to epsilon ball around original embeddings
                 delta = emb_adv.data - embeddings
-                delta = torch.clamp(delta, -epsilon, epsilon)
+                norm = torch.norm(delta, dim=2, keepdim=True)
+                factor = torch.min(norm, torch.ones_like(norm) * epsilon) / (norm + 1e-8)
+                delta = delta * factor
                 emb_adv.data = embeddings + delta
                 
                 # Reset gradients for next step
                 if step < num_steps - 1:
                     emb_adv.grad.zero_()
+        
+        print("\nConverting perturbed embeddings to tokens...")
         
         # Convert perturbed embeddings back to token indices
         with torch.no_grad():
@@ -146,21 +170,98 @@ class BiLSTMSpam(nn.Module):
             
             # Initialize output tensor
             batch_size, seq_len, emb_dim = emb_adv.size()
-            x_adv = torch.zeros_like(x)
+            x_adv = x.clone()  # Start with original tokens
             
-            # Compute cosine similarity between perturbed embeddings and embedding matrix
+            # Process embeddings in smaller batches to avoid memory issues
+            batch_size_inner = 128  # Process 128 tokens at a time
             emb_adv_flat = emb_adv.view(-1, emb_dim)
-            emb_matrix_norm = F.normalize(emb_matrix, p=2, dim=1)
-            emb_adv_norm = F.normalize(emb_adv_flat, p=2, dim=1)
             
-            # Compute similarities and get closest tokens
-            similarities = torch.mm(emb_adv_norm, emb_matrix_norm.t())
-            closest_tokens = similarities.argmax(dim=1)
-            x_adv = closest_tokens.view(batch_size, seq_len)
+            # Track original tokens for each position
+            original_tokens = x.view(-1)
             
-            # Preserve padding tokens from original input
-            pad_mask = (x == 0)
-            x_adv = torch.where(pad_mask, x, x_adv)
+            # Track number of changes per sequence
+            changes_per_seq = torch.zeros(batch_size, dtype=torch.long)
+            max_changes_per_seq = 20  # Maximum number of changes allowed per sequence
+            
+            # Calculate importance scores for each position using attention weights
+            importance_scores = torch.zeros(batch_size * seq_len, device=device)
+            
+            # Use attention weights if available
+            if hasattr(self, 'attention'):
+                # Reshape attention weights to match token positions
+                attn_weights = attn_weights.view(-1)
+                importance_scores = attn_weights
+            else:
+                # Fallback to L2 distance if no attention
+                for i in range(0, emb_adv_flat.size(0), batch_size_inner):
+                    start_idx = i
+                    end_idx = min(i + batch_size_inner, emb_adv_flat.size(0))
+                    orig_emb = self.embedding(original_tokens[start_idx:end_idx])
+                    perturbed_emb = emb_adv_flat[start_idx:end_idx]
+                    importance_scores[start_idx:end_idx] = torch.norm(perturbed_emb - orig_emb, dim=1)
+            
+            # Sort positions by importance score
+            sorted_positions = torch.argsort(importance_scores, descending=True)
+            
+            # More aggressive similarity threshold
+            similarity_threshold = 0.3
+            
+            # Try to modify most important positions first
+            for pos in sorted_positions:
+                seq_idx = pos.item() // seq_len
+                if changes_per_seq[seq_idx] >= max_changes_per_seq:
+                    continue
+                
+                orig_token = original_tokens[pos].item()
+                if orig_token == 0:  # Skip PAD tokens
+                    continue
+                
+                # Get current embedding
+                current_emb = emb_adv_flat[pos].unsqueeze(0)  # (1, emb_dim)
+                
+                # Compute cosine similarity with all tokens
+                current_emb_norm = F.normalize(current_emb, p=2, dim=1)
+                emb_matrix_norm = F.normalize(emb_matrix, p=2, dim=1)
+                similarities = torch.mm(current_emb_norm, emb_matrix_norm.t()).squeeze()
+                
+                # Get top-k similar tokens (consider more candidates)
+                k = 20  # Consider more candidates
+                top_k_similarities, top_k_indices = torch.topk(similarities, k=k)
+                
+                # Try each candidate and pick the one that moves prediction most towards target
+                best_token = orig_token
+                max_impact = -1.0
+                
+                # Create a mini-batch with each candidate
+                test_sequences = x_adv.clone().view(-1)
+                for cand_idx, (token_idx, sim) in enumerate(zip(top_k_indices, top_k_similarities)):
+                    if token_idx.item() == orig_token or token_idx.item() == 0 or sim.item() < similarity_threshold:
+                        continue
+                        
+                    # Try this token
+                    test_sequences[pos] = token_idx
+                    test_batch = test_sequences.view(batch_size, seq_len)
+                    
+                    # Get prediction
+                    outputs, _ = self(test_batch)
+                    
+                    # Calculate impact as movement towards target class
+                    impact = torch.abs(outputs.squeeze() - y)  # How far we move from original class
+                    
+                    if impact.mean().item() > max_impact:
+                        max_impact = impact.mean().item()
+                        best_token = token_idx.item()
+                
+                # Apply the best change if we found one
+                if best_token != orig_token:
+                    x_adv.view(-1)[pos] = best_token
+                    changes_per_seq[seq_idx] += 1
+            
+            # Get final predictions
+            final_outputs, _ = self(x_adv)
+            print("\nFinal adversarial predictions:", final_outputs.cpu().numpy())
+            print("Number of tokens changed:", (x_adv != x).sum().item())
+            print("Changes per sequence:", changes_per_seq.tolist())
         
         self.eval()  # Reset to evaluation mode
         return x_adv

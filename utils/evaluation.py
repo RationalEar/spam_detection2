@@ -235,6 +235,8 @@ def analyze_adversarial_robustness(model, test_df, word2idx, max_len, device, nu
     sample_texts = test_df['text'].iloc[sample_indices].tolist()
     sample_labels = test_df['label'].iloc[sample_indices].values
     
+    print("\nAnalyzing adversarial robustness on", num_samples, "samples")
+    
     # Prepare inputs
     inputs = torch.tensor([encode(t, word2idx, max_len) for t in sample_texts]).to(device)
     labels = torch.tensor(sample_labels, dtype=torch.float32).to(device)
@@ -244,6 +246,9 @@ def analyze_adversarial_robustness(model, test_df, word2idx, max_len, device, nu
     with torch.no_grad():
         original_outputs, _ = model(inputs)
         original_preds = (original_outputs > 0.5).float()
+        print("\nOriginal predictions:", original_preds.cpu().numpy())
+        print("True labels:", labels.cpu().numpy())
+        print("Original confidence scores:", original_outputs.cpu().numpy())
     
     # Store original predictions for each sample
     original_pred_list = original_preds.cpu().numpy()
@@ -251,16 +256,32 @@ def analyze_adversarial_robustness(model, test_df, word2idx, max_len, device, nu
     # Test different epsilon values
     results = []
     for epsilon in epsilon_range:
+        print(f"\nTesting epsilon = {epsilon}")
         # Generate adversarial examples
         adv_inputs = model.generate_adversarial_example(inputs, labels, epsilon=epsilon)
+        
+        print("Number of tokens changed:", (adv_inputs != inputs).sum().item())
         
         # Get predictions on adversarial examples
         with torch.no_grad():
             adv_outputs, _ = model(adv_inputs)
             adv_preds = (adv_outputs > 0.5).float()
+            print("Adversarial predictions:", adv_preds.cpu().numpy())
+            print("Adversarial confidence scores:", adv_outputs.cpu().numpy())
         
         # Calculate success rate (percentage of predictions that changed)
         success_rate = (adv_preds != original_preds).float().mean().item()
+        print(f"Attack success rate: {success_rate:.4f}")
+        
+        # Detailed changes
+        changes = (adv_preds != original_preds).cpu().numpy()
+        if changes.any():
+            print("\nSuccessful attacks:")
+            for idx in np.where(changes)[0]:
+                print(f"Sample {idx}:")
+                print(f"Original prediction: {original_outputs[idx].item():.4f}")
+                print(f"Adversarial prediction: {adv_outputs[idx].item():.4f}")
+        
         results.append({
             'epsilon': epsilon,
             'success_rate': success_rate,
