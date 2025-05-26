@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import json
 import os
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 
 class Attention(nn.Module):
@@ -70,13 +71,17 @@ class BiLSTMSpam(nn.Module):
             epsilon: Maximum perturbation size
             num_steps: Number of optimization steps
         Returns:
-            Perturbed embeddings
+            Adversarial examples as token indices
         """
         self.train()  # Enable gradients
         
+        # Ensure inputs are on the correct device
+        device = next(self.parameters()).device
+        x = x.to(device)
+        y = y.to(device)
+        
         # Get initial embeddings
-        with torch.no_grad():
-            embeddings = self.embedding(x)  # (batch_size, seq_len, embedding_dim)
+        embeddings = self.embedding(x)  # (batch_size, seq_len, embedding_dim)
         
         # Create adversarial embeddings starting from original embeddings
         emb_adv = embeddings.clone().detach().requires_grad_(True)
@@ -86,11 +91,33 @@ class BiLSTMSpam(nn.Module):
         alpha = epsilon / num_steps  # Step size
         
         for step in range(num_steps):
-            # Forward pass with current adversarial embeddings
-            outputs, _ = self(emb_adv)  # Using the modified forward method
+            # Forward pass through LSTM layers with current adversarial embeddings
+            batch_size = emb_adv.size(0)
             
-            # Compute loss
-            loss = criterion(outputs, y)
+            # Pack the embeddings to handle variable lengths
+            lengths = (x != 0).sum(dim=1)  # Get actual sequence lengths
+            packed_embeddings = pack_padded_sequence(emb_adv, lengths.cpu(), batch_first=True, enforce_sorted=False)
+            
+            # Pass through LSTM
+            lstm_out, _ = self.lstm(packed_embeddings)
+            
+            # Unpack the sequence
+            lstm_out, _ = pad_packed_sequence(lstm_out, batch_first=True)
+            
+            # Apply attention
+            if hasattr(self, 'attention'):
+                attn_mask = (x != 0).float()  # Create attention mask
+                context, _ = self.attention(lstm_out, attn_mask)
+            else:
+                # If no attention, use last hidden state
+                context = lstm_out[:, -1, :]
+            
+            # Final classification
+            x_fc1 = self.dropout(F.relu(self.fc1(context)))
+            outputs = torch.sigmoid(self.fc2(x_fc1))
+            
+            # Compute loss (maximize loss to create adversarial example)
+            loss = -criterion(outputs.squeeze(), y)  # Negative because we want to maximize loss
             
             # Compute gradients
             loss.backward()
@@ -99,19 +126,44 @@ class BiLSTMSpam(nn.Module):
             with torch.no_grad():
                 # Get gradient sign
                 grad_sign = emb_adv.grad.sign()
+                
                 # Update embeddings
                 emb_adv.data = emb_adv.data + alpha * grad_sign
                 
-                # Project back to epsilon ball
+                # Project back to epsilon ball around original embeddings
                 delta = emb_adv.data - embeddings
                 delta = torch.clamp(delta, -epsilon, epsilon)
                 emb_adv.data = embeddings + delta
                 
                 # Reset gradients for next step
-                if step < num_steps - 1:  # Don't need to zero grad on last iteration
+                if step < num_steps - 1:
                     emb_adv.grad.zero_()
         
-        return emb_adv
+        # Convert perturbed embeddings back to token indices
+        with torch.no_grad():
+            # Get embedding matrix
+            emb_matrix = self.embedding.weight  # (vocab_size, embedding_dim)
+            
+            # Initialize output tensor
+            batch_size, seq_len, emb_dim = emb_adv.size()
+            x_adv = torch.zeros_like(x)
+            
+            # Compute cosine similarity between perturbed embeddings and embedding matrix
+            emb_adv_flat = emb_adv.view(-1, emb_dim)
+            emb_matrix_norm = F.normalize(emb_matrix, p=2, dim=1)
+            emb_adv_norm = F.normalize(emb_adv_flat, p=2, dim=1)
+            
+            # Compute similarities and get closest tokens
+            similarities = torch.mm(emb_adv_norm, emb_matrix_norm.t())
+            closest_tokens = similarities.argmax(dim=1)
+            x_adv = closest_tokens.view(batch_size, seq_len)
+            
+            # Preserve padding tokens from original input
+            pad_mask = (x == 0)
+            x_adv = torch.where(pad_mask, x, x_adv)
+        
+        self.eval()  # Reset to evaluation mode
+        return x_adv
 
     def clip_gradients(self, max_norm=1.0):
         """
