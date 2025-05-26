@@ -195,7 +195,7 @@ def analyze_model_explanations(model, test_df, word2idx, max_len, device, num_sa
         
         # Create horizontal bar chart for SHAP
         y_pos = np.arange(top_k)
-        colors = ['red' if v < 0 else 'blue' for v in top_values]
+        colors = ['blue' if v < 0 else 'red' for v in top_values]
         plt.barh(y_pos, top_values, color=colors)
         plt.yticks(y_pos, top_words)
         plt.xlabel('SHAP value')
