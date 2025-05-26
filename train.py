@@ -122,7 +122,7 @@ def train_bilstm(model, train_loader, val_loader, criterion, optimizer, num_epoc
 def train_model(model_type, train_df, test_df, embedding_dim=300, pretrained_embeddings=None,
                 model_save_path='', max_len=200, evaluate=False):
     
-    word2idx = build_vocab(train_df['text'])
+    word2idx, idx2word = build_vocab(train_df['text'])
     
     X_train = torch.tensor([encode(t, word2idx, max_len) for t in train_df['text']])
     y_train = torch.tensor(train_df['label'].values, dtype=torch.float32)
