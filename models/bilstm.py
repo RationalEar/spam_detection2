@@ -50,7 +50,10 @@ class BiLSTMSpam(nn.Module):
 
     def forward(self, x, mask=None):
         # x: (batch_size, seq_len)
-        x = self.embedding(x)  # (batch_size, seq_len, embedding_dim)
+        if isinstance(x, torch.LongTensor) or (torch.cuda.is_available() and isinstance(x, torch.cuda.LongTensor)):
+            # Regular forward pass with input indices
+            x = self.embedding(x)  # (batch_size, seq_len, embedding_dim)
+        # If x is already an embedding tensor, use it directly
         lstm_out, _ = self.lstm(x)  # (batch_size, seq_len, hidden_dim*2)
         context, attn_weights = self.attention(lstm_out, mask)
         x = self.dropout(F.relu(self.fc1(context)))
@@ -72,7 +75,8 @@ class BiLSTMSpam(nn.Module):
         self.train()  # Enable gradients
         
         # Get initial embeddings
-        embeddings = self.embedding(x)  # (batch_size, seq_len, embedding_dim)
+        with torch.no_grad():
+            embeddings = self.embedding(x)  # (batch_size, seq_len, embedding_dim)
         
         # Create adversarial embeddings starting from original embeddings
         emb_adv = embeddings.clone().detach().requires_grad_(True)
@@ -83,11 +87,7 @@ class BiLSTMSpam(nn.Module):
         
         for step in range(num_steps):
             # Forward pass with current adversarial embeddings
-            lstm_out, _ = self.lstm(emb_adv)
-            context, _ = self.attention(lstm_out)
-            x_fc1 = self.dropout(F.relu(self.fc1(context)))
-            logits = self.fc2(x_fc1)
-            outputs = torch.sigmoid(logits).squeeze(-1)
+            outputs, _ = self(emb_adv)  # Using the modified forward method
             
             # Compute loss
             loss = criterion(outputs, y)
