@@ -62,14 +62,14 @@ class BiLSTMSpam(nn.Module):
         x = torch.sigmoid(x).squeeze(-1)
         return x, attn_weights
 
-    def generate_adversarial_example(self, x, y, epsilon=0.1, num_steps=10):
+    def generate_adversarial_example(self, x, y, epsilon=0.1, num_steps=30):
         """
         Generate adversarial examples using Projected Gradient Descent (PGD)
         Args:
             x: Input tensor (batch_size, seq_len)
             y: Target labels
             epsilon: Maximum perturbation size
-            num_steps: Number of optimization steps
+            num_steps: Number of optimization steps (increased to 30)
         Returns:
             Adversarial examples as token indices
         """
@@ -100,6 +100,8 @@ class BiLSTMSpam(nn.Module):
         
         # PGD attack
         alpha = epsilon / num_steps  # Step size
+        best_loss = float('-inf')
+        best_emb_adv = None
         
         for step in range(num_steps):
             # Forward pass through LSTM layers with current adversarial embeddings
@@ -128,14 +130,19 @@ class BiLSTMSpam(nn.Module):
             outputs = torch.sigmoid(self.fc2(x_fc1))
             
             # Print intermediate predictions every few steps
-            if step % 3 == 0:
+            if step % 5 == 0:
                 print(f"\nStep {step} predictions:", outputs.detach().cpu().numpy())
             
             # Compute loss to maximize probability of target (opposite) class
             loss = -criterion(outputs.squeeze(), target)  # Negative loss to maximize target class probability
             
+            # Track best adversarial example
+            if loss.item() > best_loss:
+                best_loss = loss.item()
+                best_emb_adv = emb_adv.clone().detach()
+            
             # Print loss
-            if step % 3 == 0:
+            if step % 5 == 0:
                 print(f"Step {step} loss:", loss.item())
             
             # Compute gradients
@@ -163,6 +170,9 @@ class BiLSTMSpam(nn.Module):
         
         print("\nConverting perturbed embeddings to tokens...")
         
+        # Use the best adversarial example found
+        emb_adv = best_emb_adv if best_emb_adv is not None else emb_adv
+        
         # Convert perturbed embeddings back to token indices
         with torch.no_grad():
             # Get embedding matrix
@@ -181,7 +191,7 @@ class BiLSTMSpam(nn.Module):
             
             # Track number of changes per sequence
             changes_per_seq = torch.zeros(batch_size, dtype=torch.long)
-            max_changes_per_seq = 20  # Maximum number of changes allowed per sequence
+            max_changes_per_seq = min(30, seq_len // 2)  # Increased from 20 to 30, but limit to half sequence length
             
             # Calculate importance scores for each position using attention weights
             importance_scores = torch.zeros(batch_size * seq_len, device=device)
@@ -190,7 +200,12 @@ class BiLSTMSpam(nn.Module):
             if hasattr(self, 'attention'):
                 # Reshape attention weights to match token positions
                 attn_weights = attn_weights.view(-1)
-                importance_scores = attn_weights
+                # Scale attention weights by prediction confidence and target difference
+                pred_conf = outputs.detach().squeeze()
+                pred_diff = torch.abs(pred_conf - target)  # Higher weight for tokens that could flip prediction
+                pred_conf = torch.where(target == 1, pred_conf, 1 - pred_conf)
+                pred_conf = pred_conf.repeat_interleave(seq_len)
+                importance_scores = attn_weights * pred_conf * pred_diff.repeat_interleave(seq_len)
             else:
                 # Fallback to L2 distance if no attention
                 for i in range(0, emb_adv_flat.size(0), batch_size_inner):
@@ -203,8 +218,10 @@ class BiLSTMSpam(nn.Module):
             # Sort positions by importance score
             sorted_positions = torch.argsort(importance_scores, descending=True)
             
-            # More aggressive similarity threshold
-            similarity_threshold = 0.3
+            # More aggressive similarity threshold that scales with epsilon and confidence
+            base_threshold = 0.3  # Lower base threshold
+            conf_factor = pred_conf.mean().item()  # Use prediction confidence to adjust threshold
+            similarity_threshold = max(0.2, base_threshold - epsilon * 2 - (1 - conf_factor) * 0.1)
             
             # Try to modify most important positions first
             for pos in sorted_positions:
@@ -224,8 +241,8 @@ class BiLSTMSpam(nn.Module):
                 emb_matrix_norm = F.normalize(emb_matrix, p=2, dim=1)
                 similarities = torch.mm(current_emb_norm, emb_matrix_norm.t()).squeeze()
                 
-                # Get top-k similar tokens (consider more candidates)
-                k = 20  # Consider more candidates
+                # Get top-k similar tokens (increased from 30 to 40)
+                k = 40
                 top_k_similarities, top_k_indices = torch.topk(similarities, k=k)
                 
                 # Try each candidate and pick the one that moves prediction most towards target
@@ -234,23 +251,55 @@ class BiLSTMSpam(nn.Module):
                 
                 # Create a mini-batch with each candidate
                 test_sequences = x_adv.clone().view(-1)
-                for cand_idx, (token_idx, sim) in enumerate(zip(top_k_indices, top_k_similarities)):
-                    if token_idx.item() == orig_token or token_idx.item() == 0 or sim.item() < similarity_threshold:
+                
+                # Try candidates in batches to speed up evaluation
+                batch_size_cand = 10
+                for i in range(0, k, batch_size_cand):
+                    end_idx = min(i + batch_size_cand, k)
+                    curr_candidates = top_k_indices[i:end_idx]
+                    curr_similarities = top_k_similarities[i:end_idx]
+                    
+                    # Skip candidates that don't meet similarity threshold
+                    valid_mask = curr_similarities >= similarity_threshold
+                    if not valid_mask.any():
                         continue
-                        
-                    # Try this token
-                    test_sequences[pos] = token_idx
-                    test_batch = test_sequences.view(batch_size, seq_len)
                     
-                    # Get prediction
-                    outputs, _ = self(test_batch)
+                    curr_candidates = curr_candidates[valid_mask]
                     
-                    # Calculate impact as movement towards target class
-                    impact = torch.abs(outputs.squeeze() - y)  # How far we move from original class
+                    # Create batch of sequences with different candidates
+                    test_batch = []
+                    for token_idx in curr_candidates:
+                        if token_idx.item() == orig_token:
+                            continue
+                        temp_seq = test_sequences.clone()
+                        temp_seq[pos] = token_idx
+                        test_batch.append(temp_seq.view(batch_size, seq_len))
                     
-                    if impact.mean().item() > max_impact:
-                        max_impact = impact.mean().item()
-                        best_token = token_idx.item()
+                    if not test_batch:
+                        continue
+                    
+                    # Evaluate all candidates at once
+                    test_batch = torch.stack(test_batch)  # Shape: (num_candidates, batch_size, seq_len)
+                    # Reshape to (num_candidates * batch_size, seq_len)
+                    test_batch_flat = test_batch.view(-1, seq_len)
+                    outputs_batch, _ = self(test_batch_flat)
+                    # Reshape outputs back to (num_candidates, batch_size)
+                    outputs_batch = outputs_batch.view(-1, batch_size)
+                    
+                    # Calculate impact for each candidate
+                    target_expanded = target.unsqueeze(0).expand(len(test_batch), -1)
+                    impact_batch = torch.abs(outputs_batch - y)
+                    
+                    # Find best candidate
+                    max_impact_idx = impact_batch.mean(dim=1).argmax()
+                    curr_impact = impact_batch.mean(dim=1)[max_impact_idx].item()
+                    
+                    if curr_impact > max_impact:
+                        max_impact = curr_impact
+                        # Get the token from the original shaped test_batch
+                        seq_idx = pos // seq_len  # Get the sequence index
+                        token_pos = pos % seq_len  # Get position within sequence
+                        best_token = test_batch[max_impact_idx, seq_idx, token_pos].item()
                 
                 # Apply the best change if we found one
                 if best_token != orig_token:
