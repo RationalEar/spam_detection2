@@ -38,9 +38,20 @@ class SpamBERT(nn.Module):
             )
         return self.layer_integrated_gradients
     
-    def forward_for_ig(self, inputs):
+    def forward_for_ig(self, inputs, attention_mask=None, token_type_ids=None):
         """Forward pass specifically for integrated gradients"""
-        return self.forward(inputs)[0]
+        if isinstance(inputs, tuple):
+            input_ids = inputs[0]
+            attention_mask = inputs[1] if len(inputs) > 1 else attention_mask
+            token_type_ids = inputs[2] if len(inputs) > 2 else token_type_ids
+        else:
+            input_ids = inputs
+            
+        return self.forward(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids
+        )[0]
 
     @autocast('cuda')  # Enable automatic mixed precision
     def forward(self, input_ids, attention_mask=None, token_type_ids=None, 
