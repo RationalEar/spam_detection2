@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from sklearn.metrics import roc_curve, auc
+from scipy.stats import spearmanr # For Rank Correlation
 
 from utils.cnn_evaluation import compute_metrics
 
@@ -355,77 +356,122 @@ class SpamCNN(nn.Module):
             auc_ins = np.trapz(insertions) / len(indices)
             return auc_ins
 
-        def compute_stability(x_single, cam_single, k=5):
-            # Ensure input tensors are on correct device
+        def compute_comprehensiveness_single(x_single, cam_single, k=5):
+            """Computes comprehensiveness for a single sample."""
             x_single = x_single.to(device)
             cam_single = cam_single.to(device)
 
-            # Generate perturbations
-            perturbations = []
+            pad_token = 0 # Assuming 0 is the PAD token
+            num_features = x_single.size(0)
+            actual_k = min(k, num_features)
+            if actual_k == 0: return 0.0
 
-            for _ in range(num_perturbations):
-                # Create a copy of the input
-                x_perturbed = x_single.clone()
+            with torch.no_grad():
+                original_pred = self(x_single.unsqueeze(0).long()).item()
 
-                # Randomly select ~10% of tokens to perturb (replace with UNK token)
-                non_pad_mask = (x_perturbed != 0)  # Exclude PAD tokens from perturbation
-                non_pad_indices = torch.nonzero(non_pad_mask, as_tuple=False).squeeze()
+            _, top_k_indices = torch.topk(cam_single, actual_k)
+            
+            x_masked = x_single.clone()
+            x_masked[top_k_indices] = pad_token
 
-                if non_pad_indices.numel() > 0:
-                    # Ensure indices is always a 1D tensor
-                    non_pad_indices = non_pad_indices.view(-1)
+            with torch.no_grad():
+                pred_after_removal = self(x_masked.unsqueeze(0).long()).item()
+            
+            comprehensiveness = original_pred - pred_after_removal
+            return comprehensiveness
 
-                    # Calculate number of tokens to perturb (at least 1, at most 10%)
-                    num_to_perturb = max(1, int(non_pad_indices.size(0) * 0.1))
+        def compute_rank_correlation_single(cam_original, cam_perturbed):
+            """Computes Spearman's rank correlation for a single pair of CAMs."""
+            cam_original_flat = cam_original.flatten().cpu().numpy()
+            cam_perturbed_flat = cam_perturbed.flatten().cpu().numpy()
 
-                    # Randomly select indices to perturb
-                    perm = torch.randperm(non_pad_indices.size(0), device=device)
-                    indices_to_perturb = non_pad_indices[perm[:num_to_perturb]]
+            valid_mask = np.isfinite(cam_original_flat) & np.isfinite(cam_perturbed_flat)
+            cam_original_valid = cam_original_flat[valid_mask]
+            cam_perturbed_valid = cam_perturbed_flat[valid_mask]
 
-                    # Replace with UNK token (assuming UNK is 1)
-                    x_perturbed[indices_to_perturb] = 1  # UNK token
-
-                # Get new explanation
-                with torch.no_grad():
-                    x_input = x_perturbed.unsqueeze(0).long()
-                    new_cam = self.grad_cam_auto(x_input)[0]
-
-                # Get top-k indices safely
-                k_orig = min(k, cam_single.numel())
-                k_pert = min(k, new_cam.numel())
-
-                _, top_k_orig = torch.topk(cam_single, k_orig)
-                _, top_k_pert = torch.topk(new_cam, k_pert)
-
-                # Calculate Jaccard similarity
-                intersection = len(set(top_k_orig.cpu().tolist()) & set(top_k_pert.cpu().tolist()))
-                union = len(set(top_k_orig.cpu().tolist()) | set(top_k_pert.cpu().tolist()))
-                jaccard = intersection / union if union > 0 else 0.0
-                perturbations.append(jaccard)
-
-            return np.mean(perturbations)
+            if len(cam_original_valid) < 2 or len(cam_perturbed_valid) < 2:
+                return np.nan # Not enough data points
+            
+            correlation, _ = spearmanr(cam_original_valid, cam_perturbed_valid)
+            return correlation
 
         # Calculate metrics for each sample in batch
         metrics = {
             'auc_del': [],
             'auc_ins': [],
-            'stability': [],
+            'jaccard_stability': [], # Renamed from 'stability'
+            'comprehensiveness': [],
+            'rank_correlation': [],
             'ecs': []  # Explanation Consistency Score
         }
 
+        k_top_features = 5 # Default k for comprehensiveness and jaccard
+
         for i in range(batch_size):
-            auc_del = compute_auc_del(x[i], cam_maps[i])
-            auc_ins = compute_auc_ins(x[i], cam_maps[i])
-            stability = compute_stability(x[i], cam_maps[i])
+            # --- Existing metrics ---
+            auc_del_val = compute_auc_del(x[i], cam_maps[i])
+            auc_ins_val = compute_auc_ins(x[i], cam_maps[i])
+            
+            # --- Stability and Rank Correlation (need perturbed CAMs) ---
+            jaccard_sum_for_sample = 0
+            rank_corr_sum_for_sample = 0
+            num_valid_perturbations_for_stability = 0
 
-            # Calculate ECS (Explanation Consistency Score)
-            faithfulness = (auc_ins - auc_del + 1) / 2  # Normalize to [0,1]
+            for _ in range(num_perturbations):
+                x_perturbed_single = x[i].clone()
+                non_pad_mask = (x_perturbed_single != 0)
+                non_pad_indices = torch.nonzero(non_pad_mask, as_tuple=False).squeeze()
+                
+                current_cam_original = cam_maps[i]
+
+                if non_pad_indices.numel() > 0:
+                    non_pad_indices = non_pad_indices.view(-1)
+                    num_to_perturb = max(1, int(non_pad_indices.size(0) * 0.1))
+                    perm = torch.randperm(non_pad_indices.size(0), device=device)
+                    indices_to_perturb = non_pad_indices[perm[:num_to_perturb]]
+                    x_perturbed_single[indices_to_perturb] = 1  # UNK token
+
+                with torch.no_grad():
+                    # Ensure x_perturbed_single is LongTensor for embedding layer
+                    cam_perturbed_single = self.grad_cam_auto(x_perturbed_single.unsqueeze(0).long())[0]
+                
+                # Jaccard
+                k_orig = min(k_top_features, current_cam_original.numel())
+                k_pert = min(k_top_features, cam_perturbed_single.numel())
+                if k_orig > 0 and k_pert > 0:
+                    _, top_k_orig_indices = torch.topk(current_cam_original, k_orig)
+                    _, top_k_pert_indices = torch.topk(cam_perturbed_single, k_pert)
+                    set_orig = set(top_k_orig_indices.cpu().tolist())
+                    set_pert = set(top_k_pert_indices.cpu().tolist())
+                    intersection = len(set_orig & set_pert)
+                    union = len(set_orig | set_pert)
+                    jaccard_val = intersection / union if union > 0 else 0.0
+                    jaccard_sum_for_sample += jaccard_val
+                    
+                    # Rank Correlation
+                    rank_corr_val = compute_rank_correlation_single(current_cam_original, cam_perturbed_single)
+                    if not np.isnan(rank_corr_val):
+                        rank_corr_sum_for_sample += rank_corr_val
+                        num_valid_perturbations_for_stability +=1
+            
+            avg_jaccard_stability = jaccard_sum_for_sample / num_perturbations if num_perturbations > 0 else np.nan
+            avg_rank_correlation = rank_corr_sum_for_sample / num_valid_perturbations_for_stability if num_valid_perturbations_for_stability > 0 else np.nan
+
+            # --- Comprehensiveness ---
+            comprehensiveness_val = compute_comprehensiveness_single(x[i], cam_maps[i], k=k_top_features)
+
+            # Calculate ECS (Explanation Consistency Score) - using new avg_jaccard_stability
+            faithfulness = (auc_ins_val - auc_del_val + 1) / 2  # Normalize to [0,1]
             simplicity = 1 - (torch.count_nonzero(cam_maps[i]) / cam_maps[i].numel()).item()
-            ecs = 0.5 * faithfulness + 0.4 * stability + 0.1 * simplicity
+            # Adjusted ECS weights slightly to include rank correlation if desired, or keep as is.
+            # For now, keeping original ECS structure but using the re-calculated Jaccard.
+            ecs = 0.5 * faithfulness + 0.4 * avg_jaccard_stability + 0.1 * simplicity
 
-            metrics['auc_del'].append(auc_del)
-            metrics['auc_ins'].append(auc_ins)
-            metrics['stability'].append(stability)
+            metrics['auc_del'].append(auc_del_val)
+            metrics['auc_ins'].append(auc_ins_val)
+            metrics['jaccard_stability'].append(avg_jaccard_stability)
+            metrics['comprehensiveness'].append(comprehensiveness_val)
+            metrics['rank_correlation'].append(avg_rank_correlation)
             metrics['ecs'].append(ecs)
 
         # Average metrics across batch
