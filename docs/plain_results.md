@@ -161,7 +161,15 @@ Explanation metrics:
 convergence_delta: -0.0129
 attribution_mean: -0.0000
 attribution_std: 0.0005
+audc_ig: -0.0277
+auic_ig: -0.1195
+comprehensiveness_ig: -0.0000
+jaccard_stability_attn: 0.1111
+rank_correlation_attn: 0.3809
 
 ## 3. Adversarial Robustness Analysis
-prediction_stability: 0.7603
-decision_stability: 0.7600
+Attack success rate: 0.0000
+Avg explanation shift cosine sim: 0.9997
+Avg top k retention: 0.2000
+Prediction output stability: 0.9859
+Decision flip stability: 1.0000
