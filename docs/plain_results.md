@@ -13,8 +13,11 @@ Specificity 0.6512
 ## 2. Explainability Analysis
 Explanation Quality Metrics:
 AUC-Del (Faithfulness): 0.2442
-AUC-Ins (Comprehensiveness): 0.7367
-Stability Score: 0.4462
+AUC-Ins (Faithfulness): 0.7367
+Comprehensiveness (Top-5): 0.0207
+Jaccard Stability (Top-5): 0.4462
+Rank Correlation (Spearman ρ): 0.7343
+Explanation Consistency Score (ECS): 0.5613
 
 ## 3. Adversarial Robustness Analysis
 Adversarial Robustness Results:
@@ -31,11 +34,27 @@ Explanation shift under different perturbation sizes:
 ε=0.1: 0.0000
 
 Clean vs Adversarial Performance:
-Clean Performance:
-- Accuracy: -5.0000
+Using 50 samples for adversarial robustness evaluation.
 
-Adversarial Performance:
-- Accuracy: -5.0000
+--- Epsilon = 0.01 ---
+  Attack Success Rate: 0.0000
+  Explanation Shift (Cosine Distance): 0.0000
+  Top-5 Retention: 1.0000
+
+--- Epsilon = 0.05 ---
+  Attack Success Rate: 0.0000
+  Explanation Shift (Cosine Distance): 0.0000
+  Top-5 Retention: 1.0000
+
+--- Epsilon = 0.1 ---
+  Attack Success Rate: 0.0000
+  Explanation Shift (Cosine Distance): 0.0000
+  Top-5 Retention: 1.0000
+
+--- Epsilon = 0.15 ---
+  Attack Success Rate: 0.0000
+  Explanation Shift (Cosine Distance): 0.0000
+  Top-5 Retention: 1.0000
 
 
 # BiLSTM Evaluation
