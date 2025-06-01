@@ -71,3 +71,14 @@ def load_glove_embeddings(glove_path, word2idx, embedding_dim=300):
         else:
             embedding_matrix[idx] = np.random.normal(scale=0.6, size=(embedding_dim,))
     return torch.tensor(embedding_matrix)
+
+
+def get_pad_token_id(word2idx):
+    """
+    Returns the token ID for the PAD token.
+    Args:
+        word2idx (dict): Mapping from word to index.
+    Returns:
+        int: The ID of the PAD token (typically 0).
+    """
+    return word2idx.get('<PAD>', 0)

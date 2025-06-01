@@ -61,6 +61,41 @@ ROC AUC: 0.982
 PR AUC: 0.954
 
 ## 2. Explainability Analysis
+Calculating Explanation Quality Metrics...
+Using SHAP Attributions for AUDC, AUIC, Comprehensiveness.
+  Average AUDC (Faithfulness): -0.1537 (using SHAP)
+  Average AUIC (Faithfulness): -0.4701 (using SHAP)
+  Average Comprehensiveness (k=5): -0.1978 (using SHAP)
+
+Using Model's Attention Weights for Stability Metrics (Jaccard & Rank Correlation).
+
+Starting adversarial example generation:
+Initial target labels: [0. 1. 1. 1. 1.]
+Initial predictions: [9.9809974e-01 2.7092443e-07 2.4505341e-02 2.2034536e-05 4.0850745e-07]
+
+Step 0 predictions: [[9.9947268e-01]
+ [2.0220325e-08]
+ [1.4162360e-03]
+ [8.2800456e-04]
+ [2.3162085e-11]]
+Step 0 loss: -12.681803703308105
+
+Converting perturbed embeddings to tokens...
+
+Final adversarial predictions: [9.8844612e-01 5.1913044e-04 6.8400526e-01 3.4131566e-01 1.1169785e-02]
+Number of tokens changed: 150
+Changes per sequence: [30, 30, 30, 30, 30]
+  Jaccard Stability (Attention, k=5): 0.2579
+  Rank Correlation (Attention): 0.7245
+--- End: Explanation Quality Metrics ---
+
+
+--- Overall Explanation Quality Metrics ---
+  Audc: -0.1537
+  Auic: -0.4701
+  Comprehensiveness: -0.1978
+  Jaccard stability attn: 0.2579
+  Rank correlation attn: 0.7245
 
 ## 3. Adversarial Robustness Analysis
 
@@ -90,6 +125,23 @@ Adversarial Results:
   'success_rate': 0.20000000298023224,
   'original_preds': array([0., 1., 1., 1., 0.], dtype=float32),
   'adversarial_preds': array([0., 0., 1., 1., 0.], dtype=float32)}]
+
+--- Overall Adversarial Robustness Metrics ---
+
+  Results for Epsilon = 0.01:
+    Attack Success Rate: 0.2000
+    Avg. Explanation Shift (Cosine Sim): 0.6441
+    Avg. Top-k Retention: 0.4400
+
+  Results for Epsilon = 0.05:
+    Attack Success Rate: 0.0000
+    Avg. Explanation Shift (Cosine Sim): 0.6416
+    Avg. Top-k Retention: 0.4400
+
+  Results for Epsilon = 0.1:
+    Attack Success Rate: 0.2000
+    Avg. Explanation Shift (Cosine Sim): 0.7618
+    Avg. Top-k Retention: 0.5200
 
 
 # BERT Evaluation

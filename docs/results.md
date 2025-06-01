@@ -35,25 +35,43 @@ Here is a table summarizing all the metrics that need to be compared, categorize
 
 Here’s the compiled comparison table of the three models (CNN, BiLSTM, BERT) based on the experiment results, structured by evaluation dimension and simplified for clarity:  
 
-| **Category**               | **Metric**                  | **CNN**       | **BiLSTM**    | **BERT**      |
-|----------------------------|-----------------------------|---------------|---------------|---------------|
-| **Detection Performance**   | Accuracy                    | 0.5562        | 0.94          | 0.9760        |
-|                            | Precision                   | 0.3140        | 0.90 (class 1)| 0.9443        |
-|                            | Recall                      | 0.3488        | 0.91 (class 1)| 0.9816        |
-|                            | F1-Score                    | 0.3305        | 0.91 (class 1)| 0.9626        |
-|                            | AUC-ROC                     | 0.9894        | 0.982         | 0.9972        |
-|                            | False Positive Rate (FPR)   | 0.3488        | 0.05*         | 0.0265*       |
-|                            | False Negative Rate (FNR)   | 0.6512        | 0.09*         | 0.0184*       |
-|                            | Spam Catch Rate (Recall)    | 0.3488        | 0.91          | 0.9816        |
-|                            | Ham Preservation Rate       | 0.6512        | 0.95          | 0.9735        |
-| **Explanation Quality**     | AUC-Del (Faithfulness)      | 0.2442        | N/A           | N/A           |
-|                            | AUC-Ins (Comprehensiveness) | 0.7367        | N/A           | N/A           |
-|                            | Stability Score             | 0.4462        | N/A           | N/A           |
-| **Adversarial Robustness**  | Clean Accuracy              | 0.6250        | N/A           | N/A           |
-|                            | Attack Success Rate         | N/A           | 0.2000        | N/A           |
-|                            | Explanation Shift (ε=0.1)   | 0.0000        | N/A           | N/A           |
-|                            | Prediction Stability        | N/A           | N/A           | 0.7603        |
-|                            | Decision Stability          | N/A           | N/A           | 0.7600        |
+| **Category**               | **Metric**                          | **CNN**       | **BiLSTM**     | **BERT**      |
+|----------------------------|-------------------------------------|---------------|----------------|---------------|
+| **Detection Performance**   | Accuracy                            | 0.5562        | 0.94           | 0.9760        |
+|                            | Precision                           | 0.3140        | 0.90 (class 1) | 0.9443        |
+|                            | Recall                              | 0.3488        | 0.91 (class 1) | 0.9816        |
+|                            | F1-Score                            | 0.3305        | 0.91 (class 1) | 0.9626        |
+|                            | AUC-ROC                             | 0.9894        | 0.982          | 0.9972        |
+|                            | PR AUC                              | N/A           | 0.954          | N/A           |
+|                            | False Positive Rate (FPR)           | 0.3488        | 0.05*          | 0.0265*       |
+|                            | False Negative Rate (FNR)           | 0.6512        | 0.09*          | 0.0184*       |
+|                            | Spam Catch Rate                     | 0.3488        | 0.91           | 0.9816        |
+|                            | Ham Preservation Rate               | 0.6512        | 0.95           | 0.9735        |
+| **Explanation Quality**     | AUC-Del (Faithfulness)              | 0.2442        | -0.1537        | N/A           |
+|                            | AUC-Ins (Comprehensiveness)         | 0.7367        | -0.4701        | N/A           |
+|                            | Comprehensiveness (k=5)             | N/A           | -0.1978        | N/A           |
+|                            | Jaccard Stability (Attention, k=5)  | N/A           | 0.2579         | N/A           |
+|                            | Rank Correlation (Attention)        | N/A           | 0.7245         | N/A           |
+|                            | Stability Score                     | 0.4462        | N/A            | N/A           |
+| **Adversarial Robustness**  | Clean Accuracy                      | 0.6250        | N/A            | N/A           |
+|                            | Attack Success Rate (ε=0.1)         | N/A           | 0.2000         | N/A           |
+|                            | Explanation Shift (Cosine Sim, ε=0.1)| 0.0000       | 0.7618         | N/A           |
+|                            | Top-k Retention (ε=0.1)             | N/A           | 0.5200         | N/A           |
+|                            | Prediction Stability                | N/A           | N/A            | 0.7603        |
+|                            | Decision Stability                  | N/A           | N/A            | 0.7600        |
+
+**Key Observations:**
+1. **BiLSTM Explanation Quality** now includes:
+   - Negative values for AUC-Del/AUC-Ins (suggesting potential issues with explanation faithfulness)
+   - Moderate attention stability (Jaccard: 0.26, Rank Correlation: 0.72)
+
+2. **BiLSTM Adversarial Robustness** shows:
+   - 20% attack success rate at ε=0.1
+   - High explanation shift (0.76 cosine similarity) but improved top-k retention (52%)
+
+3. **BERT** maintains superior detection metrics but lacks detailed explanation/adversarial metrics.
+
+4. **CNN** shows complete resistance to explanation shift (0.0) under perturbations despite lower accuracy.
 
 ### Notes:  
 1. **BiLSTM FPR/FNR**: Calculated from confusion matrix (FPR = FP/(FP+TN) = 38/(792+38) ≈ 0.05; FNR = FN/(TP+FN) = 33/(347+33) ≈ 0.09).  
